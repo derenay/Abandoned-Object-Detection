@@ -1,0 +1,133 @@
+from ultralytics import YOLO
+import cv2
+import yt_dlp
+import time
+import math
+
+# Youtube video URL'si
+youtube_url = 'https://youtu.be/jct8UYI54-0'
+
+ydt_opts = {
+    'format': 'best[ext=mp4]',
+    'quiet': True
+}
+
+with yt_dlp.YoutubeDL(ydt_opts) as ydt:
+    info_dict = ydt.extract_info(youtube_url, download=False)
+    video_url = info_dict['url']
+
+cap = cv2.VideoCapture(video_url)
+model = YOLO('yolo11m.pt').cuda()
+
+# Hedef sınıflar
+target_classes = {"backpack", "suitcase", "handbag"}
+
+# Sabit nesneleri merkezi koordinat bazında takip etmek için candidate listesi
+# Her candidate; {"initial_center": (x,y), "last_center": (x,y), "class": sınıf, "start_time": t, "last_seen": t, "abandoned": bool}
+static_candidates = []
+
+# Parametreler
+MATCH_THRESHOLD = 10       # Yeni tespit ile candidate arasında eşleşme için izin verilen mesafe (piksel)
+MOVE_THRESHOLD = 5         # Candidate eklenirken belirlenen merkezi ile fark bu değeri aşarsa hareket var demektir
+TIME_THRESHOLD = 20        # Saniye; bu süreden fazla hareketsiz kalırsa abandoned olarak işaretle
+CLEAR_THRESHOLD = 5        # Saniye; candidate uzun süre güncellenmezse temizle
+
+def euclidean_distance(p1, p2):
+    return math.hypot(p1[0]-p2[0], p1[1]-p2[1])
+
+def find_candidate(candidates, cls, center):
+    """
+    Aynı sınıfa ait ve center ile candidate["last_center"] arası MATCH_THRESHOLD altında olanı bul.
+    İlgili candidate'nin index'ini döndürür, bulamazsa None.
+    """
+    for idx, cand in enumerate(candidates):
+        if cand["class"] == cls and euclidean_distance(cand["last_center"], center) < MATCH_THRESHOLD:
+            return idx
+    return None
+
+while True:
+    ret, frame = cap.read()
+    if not ret:
+        print("Video bitti")
+        break
+
+    current_time = time.time()
+    
+    # Eski candidate'ları temizle: uzun süre güncellenmeyenleri listeden çıkar
+    static_candidates = [cand for cand in static_candidates if current_time - cand["last_seen"] < CLEAR_THRESHOLD]
+    
+    # YOLO + BoT-SORT kullanarak tespit (burada tracker için botsort.yaml kullanılıyor)
+    results = model.track(frame, persist=True, tracker="botsort.yaml")
+    
+    boxes = results[0].boxes.xywh.cpu().numpy()
+    # track_ids burada kullanılmayacak, tüm karar merkez koordinatından yürütülecek
+    types = results[0].boxes.cls.cpu().numpy()
+    names = results[0].names
+
+    # Her tespit için (bounding box, sınıf) işlemleri
+    for (box, cls) in zip(boxes, types):
+        class_label = names[int(cls)]
+        
+        # Bounding box'tan merkez hesapla
+        x, y, w, h = box            
+        x1 = int(x - w / 2)
+        y1 = int(y - h / 2)
+        x2 = int(x + w / 2)
+        y2 = int(y + h / 2)
+        current_center = (float(x), float(y))
+        
+        # Varsayılan olarak nesne normal (abandoned değil)
+        abandoned = False
+        
+        if class_label in target_classes:
+            # Aynı sınıfa ait candidate var mı bak
+            idx = find_candidate(static_candidates, class_label, current_center)
+            if idx is not None:
+                cand = static_candidates[idx]
+                # Eğer candidate'nin ilk kaydedilen merkezi ile yeni tespit merkezi arasındaki fark MOVE_THRESHOLD'dan büyükse
+                if euclidean_distance(cand["initial_center"], current_center) > MOVE_THRESHOLD:
+                    # Nesne hareket etmiş demektir; candidate'ı sil (yani abandoned kaydını resetle)
+                    static_candidates.pop(idx)
+                else:
+                    # Nesne hala aynı yerde; update candidate
+                    cand["last_center"] = current_center
+                    cand["last_seen"] = current_time
+                    # Eğer belirlenen süreden (TIME_THRESHOLD) fazla hareketsiz kalmışsa abandoned olarak işaretle
+                    if not cand["abandoned"] and (current_time - cand["start_time"] >= TIME_THRESHOLD):
+                        cand["abandoned"] = True
+                    abandoned = cand["abandoned"]
+            else:
+                # Candidate bulunamadıysa yeni candidate ekle
+                new_cand = {
+                    "initial_center": current_center,
+                    "last_center": current_center,
+                    "class": class_label,
+                    "start_time": current_time,
+                    "last_seen": current_time,
+                    "abandoned": False
+                }
+                static_candidates.append(new_cand)
+        # Diğer sınıflar için herhangi bir işlem yapılmayacak
+
+        # Label ve renk belirle
+        if class_label in target_classes and abandoned:
+            label = f"{class_label} abandoned"
+            color = (0, 0, 255)  # Kırmızı
+        else:
+            label = f"{class_label}"
+            color = (0, 255, 0)  # Yeşil
+        
+        cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
+        cv2.putText(frame, label, (x1, y1-10),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+    
+    cv2.imshow("Yolo 11 Youtube detection", frame)
+    if cv2.waitKey(1) & 0xFF == ord('q'):
+        break
+
+cap.release()
+cv2.destroyAllWindows()
+
+def abanoded_objects(id: int) -> None:
+    # Bu fonksiyonu artık merkez koordinat bazlı yönetimde kullanmayacağız.
+    pass
