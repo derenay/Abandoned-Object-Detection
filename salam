@@ -1,0 +1,174 @@
+from ultralytics import YOLO
+import cv2
+import yt_dlp
+import time
+import math
+
+
+
+def euclidean_distance(p1, p2):
+    return math.hypot(p1[0]-p2[0], p1[1]-p2[1])
+
+def find_candidate(candidates, cls, center):
+    for idx, cand in enumerate(candidates):
+        if euclidean_distance(cand["last_center"], center) < MATCH_THRESHOLD:
+            return idx
+    return None
+
+def find_person_object_lenght(object, person_centers):
+    a = []
+    for person_center in person_centers:
+        a.append(euclidean_distance(person_center[1], object))
+        #print(f"{object} {person_center[1]}")
+        
+    clossed_person = min(a)
+    return clossed_person
+
+
+def detection(
+    model,
+    cap,
+    target_classes:list,
+    general_classes:list,
+    static_candidates:list,
+    MATCH_THRESHOLD:int,
+    MOVE_THRESHOLD:int,
+    TIME_THRESHOLD:int,
+    CLEAR_THRESHOLD:int,
+    PERSON_OBJECT_THRESHOLD:int
+    ) -> None:
+    
+    #Lists
+    
+    #[[track_id,[x,y]],[track_id,[x,y]]]
+    person_centers = []
+    
+    
+    #Frame detection
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            print("Video bitti")
+            break
+
+        current_time = time.time()
+        
+        #uzun süre güncellenmeyenleri listeden çıkar
+        static_candidates = [cand for cand in static_candidates if current_time - cand["last_seen"] < CLEAR_THRESHOLD]
+        
+        
+        results = model.track(frame, persist=True, tracker="botsort.yaml", verbose=False, conf=0.3)
+
+        boxes = results[0].boxes.xywh.cpu().numpy()
+        types = results[0].boxes.cls.cpu().numpy()
+        names = results[0].names
+        track_ids = results[0].boxes.id.int().cpu().tolist()  
+    
+        for (box, cls, track_id) in zip(boxes, types, track_ids):
+            class_label = names[int(cls)]
+            
+            if class_label in general_classes:
+            
+                x, y, w, h = box            
+                x1 = int(x - w / 2)
+                y1 = int(y - h / 2)
+                x2 = int(x + w / 2)
+                y2 = int(y + h / 2)
+                current_center = (float(x), float(y))
+
+                if class_label == "person" and (track_id in [person_center[0] for person_center in person_centers]) is False:
+                    person_centers.append([track_id, current_center])
+                
+                
+                if class_label == "person" and (track_id in [person_center[0] for person_center in person_centers]):
+                    for percon_center in person_centers:
+                        if percon_center[0] == track_id:
+                            percon_center[1] = current_center
+                                    
+                abandoned = False
+                
+                if class_label in target_classes:
+        
+                    idx = find_candidate(static_candidates, class_label, current_center)
+                    if idx is not None:
+                        cand = static_candidates[idx]
+                        # Eğer candidate'nin ilk kaydedilen merkezi ile yeni tespit merkezi arasındaki fark MOVE_THRESHOLD'dan büyükse
+                        if euclidean_distance(cand["initial_center"], current_center) > MOVE_THRESHOLD:
+                            static_candidates.pop(idx)
+                        else:
+                            cand["last_center"] = current_center
+                            cand["last_seen"] = current_time
+                            # Eğer belirlenen süreden (TIME_THRESHOLD) fazla hareketsiz kalmışsa abandoned olarak işaretle
+                            a=find_person_object_lenght(cand["last_center"], person_centers)
+                            print(a)
+                            if not cand["abandoned"] and (current_time - cand["start_time"] >= TIME_THRESHOLD) :
+                                cand["abandoned"] = True
+                            abandoned = cand["abandoned"]
+                    else:
+                        new_cand = {
+                            "initial_center": current_center,
+                            "last_center": current_center,
+                            "class": class_label,
+                            "start_time": current_time,
+                            "last_seen": current_time,
+                            "abandoned": False
+                        }
+                        static_candidates.append(new_cand)
+            
+                if class_label in target_classes and abandoned:
+                    label = f"{class_label} abandoned"
+                    color = (0, 0, 255)  
+                elif class_label == "person":
+                    label = f"{class_label}"
+                    color = (255,255,255)
+                else:
+                    label = f"{class_label}"
+                    color = (0, 255, 0)  
+                    
+                cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
+                cv2.putText(frame, label, (x1, y1-10),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+            
+        cv2.imshow("Yolo 11 Youtube detection", frame)
+        if cv2.waitKey(1) & 0xFF == ord('q'):
+            break
+
+    cap.release()
+    cv2.destroyAllWindows()
+
+
+
+if __name__ == '__main__':
+    
+    youtube_url = 'https://youtu.be/fpTG4ELZ3bE' #https://youtu.be/fpTG4ELZ3bE https://youtu.be/jct8UYI54-0
+
+    ydt_opts = {
+        'format': 'best[ext=mp4]',
+        'quiet': True
+    }
+
+    with yt_dlp.YoutubeDL(ydt_opts) as ydt:
+        info_dict = ydt.extract_info(youtube_url, download=False)
+        video_url = info_dict['url']
+
+    cap = cv2.VideoCapture(video_url)
+    model = YOLO('yolo11m.pt').cuda()
+
+
+    target_classes = {"backpack", "suitcase", "handbag"}
+    general_classes = {"person","backpack", "suitcase", "handbag"}
+
+    #{"initial_center": (x,y), "last_center": (x,y), "class": sınıf, "start_time": t, "last_seen": t, "abandoned": bool}
+    static_candidates = []
+
+
+    MATCH_THRESHOLD = 10       # Yeni tespit ile candidate arasında eşleşme için izin verilen mesafe (piksel)
+    MOVE_THRESHOLD = 30         # Pixel;Tespit edilen nesne uzaklaşırsa abandoned ten atılır
+    TIME_THRESHOLD = 5       # Saniye; bu süreden fazla hareketsiz kalırsa abandoned olarak işaretlenicek
+    CLEAR_THRESHOLD = 5        # Saniye; candidate uzun süre güncellenmezse temizle
+    PERSON_OBJECT_THRESHOLD = 5 # Pixel; Person ile object arasındaki mesafeyi belirtir eğer bu mesafe içindeyse iki nesne asla abandoned olmaz
+    
+    detection(model, cap, target_classes, general_classes, static_candidates, MATCH_THRESHOLD, MOVE_THRESHOLD, TIME_THRESHOLD, CLEAR_THRESHOLD, PERSON_OBJECT_THRESHOLD)
+    
+
+    
