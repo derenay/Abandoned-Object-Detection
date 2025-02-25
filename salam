@@ -17,13 +17,16 @@ def find_candidate(candidates, cls, center):
 
 def find_person_object_lenght(object, person_centers):
     a = []
-    for person_center in person_centers:
-        a.append(euclidean_distance(person_center[1], object))
-        #print(f"{object} {person_center[1]}")
+    try:
+        for person_center in person_centers:
+            a.append([person_center[0],euclidean_distance(person_center[1], object),person_center[1]])
+            #print(f"{object} {person_center[1]}")
+            
         
-    clossed_person = min(a)
-    return clossed_person
-
+        clossed_person = min(a)
+        return clossed_person
+    except Exception as e:
+        print(e)
 
 def detection(
     model,
@@ -51,6 +54,7 @@ def detection(
             print("Video bitti")
             break
 
+
         current_time = time.time()
         
         #uzun süre güncellenmeyenleri listeden çıkar
@@ -58,6 +62,9 @@ def detection(
         
         
         results = model.track(frame, persist=True, tracker="botsort.yaml", verbose=False, conf=0.3)
+
+        if not results or results[0] is None or results[0].boxes.id is None:
+            continue
 
         boxes = results[0].boxes.xywh.cpu().numpy()
         types = results[0].boxes.cls.cpu().numpy()
@@ -99,9 +106,11 @@ def detection(
                             cand["last_center"] = current_center
                             cand["last_seen"] = current_time
                             # Eğer belirlenen süreden (TIME_THRESHOLD) fazla hareketsiz kalmışsa abandoned olarak işaretle
+                            
                             a=find_person_object_lenght(cand["last_center"], person_centers)
-                            print(a)
-                            if not cand["abandoned"] and (current_time - cand["start_time"] >= TIME_THRESHOLD) :
+                            
+                            if not cand["abandoned"] and (current_time - cand["start_time"] >= TIME_THRESHOLD) and a[1] > PERSON_OBJECT_THRESHOLD:
+                
                                 cand["abandoned"] = True
                             abandoned = cand["abandoned"]
                     else:
@@ -128,6 +137,8 @@ def detection(
                 cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
                 cv2.putText(frame, label, (x1, y1-10),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+
+                    
             
         cv2.imshow("Yolo 11 Youtube detection", frame)
         if cv2.waitKey(1) & 0xFF == ord('q'):
@@ -164,11 +175,11 @@ if __name__ == '__main__':
 
     MATCH_THRESHOLD = 10       # Yeni tespit ile candidate arasında eşleşme için izin verilen mesafe (piksel)
     MOVE_THRESHOLD = 30         # Pixel;Tespit edilen nesne uzaklaşırsa abandoned ten atılır
-    TIME_THRESHOLD = 5       # Saniye; bu süreden fazla hareketsiz kalırsa abandoned olarak işaretlenicek
+    TIME_THRESHOLD = 1   # Saniye; bu süreden fazla hareketsiz kalırsa abandoned olarak işaretlenicek
     CLEAR_THRESHOLD = 5        # Saniye; candidate uzun süre güncellenmezse temizle
-    PERSON_OBJECT_THRESHOLD = 5 # Pixel; Person ile object arasındaki mesafeyi belirtir eğer bu mesafe içindeyse iki nesne asla abandoned olmaz
+    PERSON_OBJECT_THRESHOLD = 90 # Pixel; Person ile object arasındaki mesafeyi belirtir eğer bu mesafe içindeyse iki nesne asla abandoned olmaz
     
     detection(model, cap, target_classes, general_classes, static_candidates, MATCH_THRESHOLD, MOVE_THRESHOLD, TIME_THRESHOLD, CLEAR_THRESHOLD, PERSON_OBJECT_THRESHOLD)
     
 
-    
+    # cv2.line(frame, (int(current_center[0]),int(current_center[1])), (int(a[2][0]),int(a[2][1])), color=(0,0,0))
