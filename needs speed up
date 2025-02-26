@@ -1,0 +1,46 @@
+import math
+import numpy as np
+
+def euclidean_distance(p1, p2):
+
+    return math.hypot(p1[0]-p2[0], p1[1]-p2[1])
+
+def find_person_object_lenght_s(object, person_centers):
+    a = []
+    for person_center in person_centers:
+        a.append(euclidean_distance(person_center[1], object))
+    
+    clossed_person = min(a)
+    return clossed_person
+        
+        
+import time 
+        
+person_centers = [[1,[2.3,4.4]], [2,[3.4,4.4]],[3,[3.3,4.4]], [4,[3.4,5.4]],[5,[8.3,4.4]], [6,[3.4,10.4]]]
+object_s = (1,5)
+
+def find_person_object_lenght(object:tuple, person_centers:list):
+
+    a = []
+    try:
+        for person_center in person_centers:
+            a.append([person_center[0],euclidean_distance(person_center[1], object),person_center[1]])
+            
+        
+        clossed_person = min(a, key=lambda sublist: sublist[1])
+        
+        return clossed_person
+    except Exception as e:
+        print(e)
+        
+     
+     
+object_s = (1,5)
+        
+#print(find_person_object_lenght(object_s, person_centers))
+
+start_time = time.time()
+print(find_person_object_lenght(object_s, person_centers))
+stop_time = time.time()
+
+print(f"{stop_time-start_time}")
