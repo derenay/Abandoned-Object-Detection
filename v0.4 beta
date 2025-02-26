@@ -4,19 +4,38 @@ import yt_dlp
 import time
 import math
 
-#10.03.13.03:8000
 
+def euclidean_distance(p1:int, p2:int) -> float:
+    """ Returns distance between two diffirent point 
 
-def euclidean_distance(p1, p2):
+    Args:
+        p1 (int): _description_
+        p2 (int): _description_
+
+    Returns:
+        float: Returns distance between two diffirent point 
+    """
     return math.hypot(p1[0]-p2[0], p1[1]-p2[1])
 
-def find_candidate(candidates, cls, center):
+
+def find_candidate(candidates:list, cls:str, center):
+
     for idx, cand in enumerate(candidates):
         if euclidean_distance(cand["last_center"], center) < MATCH_THRESHOLD:
             return idx
     return None
 
-def find_person_object_lenght(object, person_centers):
+
+def find_person_object_lenght(object:tuple, person_centers:list) -> list:
+    """ Return closest person to detected object 
+
+    Args:
+        object (tuple): _description_
+        person_centers (list): _description_
+
+    Returns:
+        list: Returns list a=[track_id, distance, center_point]
+    """
     a = []
     try:
         for person_center in person_centers:
@@ -24,10 +43,15 @@ def find_person_object_lenght(object, person_centers):
             #print(f"{object} {person_center[1]}")
             
         
-        clossed_person = min(a)
-        return clossed_person
+        closest_person = min(a, key=lambda sublist: sublist[1]) # en yakın kişiyi buluan ve tüm kişi bilgisini(liste) ni veren yer
+        return closest_person
     except Exception as e:
         print(e)
+
+# to static pixel to dynamic pixel
+def get_dynamic_pixel(frame, base_threshold):
+    height, width = frame.shape
+
 
 def detection(
     model,
@@ -41,12 +65,30 @@ def detection(
     CLEAR_THRESHOLD:int,
     PERSON_OBJECT_THRESHOLD:int
     ) -> None:
+    """_summary_
+
+    Args:
+        model (_type_): _description_
+        cap (_type_): _description_
+        target_classes (list): _description_
+        general_classes (list): _description_
+        static_candidates (list): _description_
+        MATCH_THRESHOLD (int): _description_
+        MOVE_THRESHOLD (int): _description_
+        TIME_THRESHOLD (int): _description_
+        CLEAR_THRESHOLD (int): _description_
+        PERSON_OBJECT_THRESHOLD (int): _description_
+    """
     
     #Lists
     
     #[[track_id,[x,y]],[track_id,[x,y]]]
     person_centers = []
+    
+    
+    #frame counter
     frame_count = 0
+    
     #Frame detection
     while True:
         ret, frame = cap.read()
@@ -110,7 +152,7 @@ def detection(
                                 # Eğer belirlenen süreden (TIME_THRESHOLD) fazla hareketsiz kalmışsa abandoned olarak işaretle
                                 
                                 a=find_person_object_lenght(cand["last_center"], person_centers)
-                                
+           
                                 if a[1] > PERSON_OBJECT_THRESHOLD:
                                     if cand["is_checked"] == False:
                                         abondoned_start = current_time
@@ -133,13 +175,13 @@ def detection(
                             static_candidates.append(new_cand)
                 
                     if class_label in target_classes and abandoned:
-                        label = f"{class_label} abandoned"
+                        label = f"id: {track_id} {class_label} abandoned"
                         color = (0, 0, 255)  
                     elif class_label == "person":
-                        label = f"{class_label}"
+                        label = f"{class_label} Id:{track_id}"
                         color = (255,255,255)
                     else:
-                        label = f"{class_label}"
+                        label = f"id: {track_id} {class_label}"
                         color = (0, 255, 0)  
                         
                     cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
@@ -159,20 +201,18 @@ def detection(
 
 if __name__ == '__main__':
     
-    # youtube_url = 'https://youtu.be/fpTG4ELZ3bE' #https://youtu.be/fpTG4ELZ3bE https://youtu.be/jct8UYI54-0
+    youtube_url = 'https://youtu.be/fpTG4ELZ3bE' #https://youtu.be/fpTG4ELZ3bE https://youtu.be/jct8UYI54-0
+    ydt_opts = {
+        'format': 'best[ext=mp4]',
+        'quiet': True
+    }
 
-    # ydt_opts = {
-    #     'format': 'best[ext=mp4]',
-    #     'quiet': True
-    # }
+    with yt_dlp.YoutubeDL(ydt_opts) as ydt:
+        info_dict = ydt.extract_info(youtube_url, download=False)
+        video_url = info_dict['url']
 
-    # with yt_dlp.YoutubeDL(ydt_opts) as ydt:
-    #     info_dict = ydt.extract_info(youtube_url, download=False)
-    #     video_url = info_dict['url']
-
-    cap = cv2.VideoCapture("rtsp://admin:Admin123@10.4.0.112:554/Streaming/Channels/101")
+    cap = cv2.VideoCapture(video_url)  # rtsp://admin:Admin123@10.4.0.112:554/Streaming/Channels/101
     model = YOLO('yolo11m.pt').cuda()
-
 
     target_classes = {"backpack", "suitcase", "handbag"}
     general_classes = {"person","backpack", "suitcase", "handbag"}
@@ -180,11 +220,10 @@ if __name__ == '__main__':
     #{"initial_center": (x,y), "last_center": (x,y), "class": sınıf, "start_time": t, "last_seen": t, "abandoned": bool}
     static_candidates = []
 
-
-    MATCH_THRESHOLD = 10       # Yeni tespit ile candidate arasında eşleşme için izin verilen mesafe (piksel)
-    MOVE_THRESHOLD = 30         # Pixel;Tespit edilen nesne uzaklaşırsa abandoned ten atılır
-    TIME_THRESHOLD = 5   # Saniye; bu süreden fazla hareketsiz kalırsa abandoned olarak işaretlenicek
-    CLEAR_THRESHOLD = 5        # Saniye; candidate uzun süre güncellenmezse temizle
+    MATCH_THRESHOLD = 10         # Yeni tespit ile candidate arasında eşleşme için izin verilen mesafe (piksel)
+    MOVE_THRESHOLD = 30          # Pixel;Tespit edilen nesne uzaklaşırsa abandoned ten atılır
+    TIME_THRESHOLD = 5           # Saniye; bu süreden fazla hareketsiz kalırsa abandoned olarak işaretlenicek
+    CLEAR_THRESHOLD = 5          # Saniye; candidate uzun süre güncellenmezse temizle
     PERSON_OBJECT_THRESHOLD = 90 # Pixel; Person ile object arasındaki mesafeyi belirtir eğer bu mesafe içindeyse iki nesne asla abandoned olmaz
     
     detection(model, cap, target_classes, general_classes, static_candidates, MATCH_THRESHOLD, MOVE_THRESHOLD, TIME_THRESHOLD, CLEAR_THRESHOLD, PERSON_OBJECT_THRESHOLD)
