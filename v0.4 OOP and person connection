@@ -5,19 +5,6 @@ import time
 import math
 
 
-"""
-1)
-    Şuanki modelde insanları kaydettiğimiz listede bir pop yada remove olayı yok her insanı kaydediyor(kaydediyordan kastım track id ve
-    konumunu örn:eğer aynı insan daha sonradan kamerada gözükürse ve kişi yolo da tanımlı değilse yeni insan olarak listeye eklenir)
-2)
-    person ve obje bağlantısı kuruldu ama herhangi bir fonksiyona eklenmedi takım ile görüşülüp eklenecek
-    
-3) 
-    labellamada şu eklendi:
-        1) labellerin etiketleri artık kaydedilen listelerdeki objelerden geliyor(abandoned için geçerli sadece)
-    
-"""
-
 class AbandonedDetection():
     def __init__(
         self,
@@ -26,7 +13,7 @@ class AbandonedDetection():
         target_classes:set,
         video_url:str
         )-> None: 
-        """_summary_
+        """sum
 
         Args:
             model (Yolo Model): It needs Yolo model
@@ -67,7 +54,7 @@ class AbandonedDetection():
         return None
 
 
-    def find_closest_person(self, object:tuple) -> list: 
+    def find_closest_person(self, object:tuple ,MAX_DISTANCE=60) -> list: 
         """ Return closest person to detected object 
 
         Args:
@@ -82,9 +69,13 @@ class AbandonedDetection():
                 a.append([person_detected[0], self.euclidean_distance(person_detected[1], object), person_detected[1]])
                 #print(f"{object} {person_center[1]}")
                 
-            
             closest_person = min(a, key=lambda sublist: sublist[1]) # en yakın kişiyi buluan ve tüm kişi bilgisini(liste) veren yer
-            return closest_person
+            
+            if closest_person[1] < MAX_DISTANCE:
+                return closest_person
+            
+            return None
+            
         except Exception as e:
             print(e)
             
@@ -100,12 +91,6 @@ class AbandonedDetection():
         except Exception as e:
             print(e)
             
-    
-    
-
-    # to static pixel to dynamic pixel (under developing)
-    def get_dynamic_pixel(self, frame, base_threshold):
-        height, width = frame.shape
         
         
     def start_live_or_mp4_video(self, video_url):
@@ -152,12 +137,31 @@ class AbandonedDetection():
             PERSON_OBJECT_THRESHOLD (int): Pixel; Specifies the distance between the person and the object, if they are within this distance, the two objects will never be abandoned.
         """
         
-        
+        fps = self.cap.get(cv2.CAP_PROP_FPS)
         #frame counter
         frame_count = 0
         
+        
+        
+        if fps < 30:
+            skip_frame = 2
+        elif 30 <= fps <= 60:
+            skip_frame = 3
+        else:
+            skip_frame = 4
+        print(f"skip frame: {skip_frame}\nfps: {fps}")
+        
+        frame_width = int(self.cap.get(3)) 
+        frame_height = int(self.cap.get(4)) 
+        size = (frame_width, frame_height) 
+        
+        save = cv2.VideoWriter('salam.mp4',  
+                         cv2.VideoWriter_fourcc(*'mp4v'), 
+                         fps, size) 
+        
         #Frame detection
         while True:
+     
             ret, frame = self.cap.read()
             if not ret:
                 print("Video bitti")
@@ -169,7 +173,7 @@ class AbandonedDetection():
             #uzun süre güncellenmeyenleri listeden çıkar
             self.static_candidates = [cand for cand in self.static_candidates if current_time - cand["last_seen"] < CLEAR_THRESHOLD]
             
-            if frame_count % 2:
+            if frame_count % skip_frame:
             
                 results = self.model.track(frame, persist=True, tracker="botsort.yaml", verbose=False, conf=0.2)
 
@@ -220,22 +224,25 @@ class AbandonedDetection():
                                     # Eğer belirlenen süreden (TIME_THRESHOLD) fazla hareketsiz kalmışsa abandoned olarak işaretle
                                     
                                     if self.cand["person"] is None:
-                                        self.cand["person"] = self.find_closest_person(current_center)
-                                        
-                                    self.cand["person"][2] = self.find_connected_person_object_distance(self.cand["person"])
-                                    
-                                    self.cand["person"][1] = self.euclidean_distance(self.cand["last_center"], self.cand["person"][2])
-                                    print(self.cand)
-                                    
-                                    if self.cand["person"][1] > PERSON_OBJECT_THRESHOLD:
-                                        if self.cand["is_checked"] == False:
-                                            abondoned_start = current_time
-                                            self.cand["is_checked"] = True
-                                            
-                                        if not self.cand["abandoned"] and (current_time - abondoned_start >= TIME_THRESHOLD):
-                                            self.cand["is_checked"] = True
+                                        self.cand["person"] = self.find_closest_person(current_center) # bazen ilk obje tespit edilip sonrasında person tespit ediliyor eğer tespit edilemezse None geri dönüyor bunu düzeltmek için
+                                        if self.cand['person'] is None:
                                             self.cand["abandoned"] = True
-                                        abandoned = self.cand["abandoned"]
+                                            abandoned = self.cand["abandoned"]
+                                            
+                                            
+                                    if self.cand["person"] is not None:
+                                        self.cand["person"][2] = self.find_connected_person_object_distance(self.cand["person"])
+                                        self.cand["person"][1] = self.euclidean_distance(self.cand["last_center"], self.cand["person"][2])
+                                        
+                                        if self.cand["person"][1] > PERSON_OBJECT_THRESHOLD:
+                                            if self.cand["is_checked"] == False:
+                                                abondoned_start = current_time
+                                                self.cand["is_checked"] = True
+                                                
+                                            if not self.cand["abandoned"] and (current_time - abondoned_start >= TIME_THRESHOLD):
+                                                self.cand["is_checked"] = True
+                                                self.cand["abandoned"] = True
+                                            abandoned = self.cand["abandoned"]
                                         
                             else:
                                 new_cand = {
@@ -251,7 +258,7 @@ class AbandonedDetection():
                                 }
                                 self.static_candidates.append(new_cand)
                         
-                      
+                  
                         if class_label in target_classes and abandoned:
                             label = f"id: {self.cand['track_id']} {self.cand['class']} abandoned"
                             color = (0, 0, 255)  
@@ -262,19 +269,23 @@ class AbandonedDetection():
                         else:
                             label = f"id: {track_id} {class_label}"
                             color = (0, 255, 0)  
-                        
-                    cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
-                    cv2.putText(frame, label, (x1, y1-10),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
-                        
+                            
+                        cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
+                        cv2.putText(frame, label, (x1, y1-10),
+                                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+                            
                         #print(f"static candidates ----------{self.static_candidates} bitiş-------------------")
 
                         
             frame_count+=1
-            cv2.imshow("Yolo 11 Youtube detection", frame)
+            # cv2.imshow("Yolo 11 Youtube detection", frame)
+            
+            save.write(frame) 
+
+
             if cv2.waitKey(1) & 0xFF == ord('q'):
                 break
-
+                
         self.cap.release()
         cv2.destroyAllWindows()
 
@@ -286,7 +297,7 @@ if __name__ == '__main__':
     target_classes = {"backpack", "suitcase", "handbag"}
     general_classes = {"person","backpack", "suitcase", "handbag"}
 
-    # https://youtu.be/fpTG4ELZ3bE https://youtu.be/jct8UYI54-0 https://youtu.be/ER0OdwuS6rg
+    # https://youtu.be/fpTG4ELZ3bE https://youtu.be/jct8UYI54-0 https://youtu.be/ER0OdwuS6rg  https://youtu.be/3WNGZToVQGc
     # rtsp://admin:Admin123@10.4.0.112:554/Streaming/Channels/101
     
     youtube_url = 'https://youtu.be/fpTG4ELZ3bE'
@@ -297,8 +308,8 @@ if __name__ == '__main__':
     CLEAR_THRESHOLD = 5          # Saniye; candidate uzun süre güncellenmezse temizle
     PERSON_OBJECT_THRESHOLD = 90 # Pixel; Person ile object arasındaki mesafeyi belirtir eğer bu mesafe içindeyse iki nesne asla abandoned olmaz
     
+
     detection = AbandonedDetection(model=model, video_url=youtube_url, general_classes=general_classes, target_classes=target_classes)
     detection.detection(MATCH_THRESHOLD, MOVE_THRESHOLD, TIME_THRESHOLD, CLEAR_THRESHOLD, PERSON_OBJECT_THRESHOLD)
-    
 
     # cv2.line(frame, (int(current_center[0]),int(current_center[1])), (int(a[2][0]),int(a[2][1])), color=(0,0,0))
